@@ -1,0 +1,30 @@
+# Arquivo .gitignore para projetos Python/Flask
+
+# Ignore o diretório de cache do Python
+__pycache__/
+
+# Ignore todos os arquivos de Python compilados
+*.pyc
+
+# Ignore arquivos de ambiente virtual
+# Substitua 'venv' pelo nome da sua pasta de ambiente se for diferente
+venv/
+.venv/
+
+# Ignore arquivos de configuração de IDEs (exemplo para VS Code)
+.vscode/
+
+# Ignore arquivos de ambiente com segredos e chaves de API
+.env
+
+# Ignore arquivos de credenciais e tokens gerados
+# MUITO IMPORTANTE para segurança!
+token.json
+credentials.json
+
+# Ignore arquivos de dependências (se você usa pip freeze)
+# requirements.txt DEVE ser commitado, mas o que é instalado não.
+
+# Ignore arquivos do sistema operacional
+.DS_Store
+Thumbs.db

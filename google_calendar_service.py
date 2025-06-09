@@ -1,14 +1,25 @@
-# google_calendar_service.py
+# google_calendar_service.py (versão corrigida e robusta)
+# Funções expandidas para interagir com a API do Google Calendar.
+
 import datetime
 import os.path
+import locale # <<--- NOVO: Importado para corrigir o idioma das datas
+
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
+# --- MELHORIA: Garantir que as datas sejam formatadas em Português do Brasil ---
+try:
+    locale.setlocale(locale.LC_TIME, 'pt_BR.UTF-8')
+except locale.Error:
+    print("Locale pt_BR.UTF-8 não encontrado. Usando o locale padrão do sistema.")
+
+
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
-TIMEZONE = 'America/Sao_Paulo'
+TIMEZONE = 'America/Sao_Paulo' # Você pode ajustar para o seu fuso horário
 
 def get_calendar_service():
     creds = None
@@ -31,32 +42,45 @@ def create_event(service, summary, start_time_str, end_time_str, attendees=None,
         "end": {"dateTime": end_time_str, "timeZone": TIMEZONE},
         "attendees": [{"email": email} for email in attendees] if attendees else [],
     }
-    return service.events().insert(calendarId="primary", body=event_body).execute()
+    return service.events().insert(calendarId="primary", body=event_body, sendUpdates="all").execute()
 
 def list_upcoming_events(service, date_str=None):
-    if not date_str:
-        start_dt = datetime.datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-    else:
-        start_dt = datetime.datetime.fromisoformat(date_str)
+    # --- CORREÇÃO: Lógica de data/hora para buscar eventos corretamente ---
+    try:
+        if date_str:
+            # Se uma data for fornecida pela IA, use-a.
+            target_date = datetime.datetime.fromisoformat(date_str).date()
+        else:
+            # Se não, use a data local de hoje.
+            target_date = datetime.date.today()
 
-    time_min = start_dt.isoformat() + "Z"
-    time_max = (start_dt + datetime.timedelta(days=1)).isoformat() + "Z"
+        # Define o início do dia (meia-noite) e o fim do dia (23:59:59) no fuso horário correto.
+        time_min_dt = datetime.datetime.combine(target_date, datetime.time.min).astimezone(datetime.timezone.utc)
+        time_max_dt = datetime.datetime.combine(target_date, datetime.time.max).astimezone(datetime.timezone.utc)
+        
+        # Formata para o padrão RFC3339 que a API do Google espera.
+        time_min = time_min_dt.isoformat()
+        time_max = time_max_dt.isoformat()
 
-    formatted_date = start_dt.strftime("%d de %B de %Y")
+        # Formata a data para uma resposta amigável em português.
+        formatted_date = target_date.strftime("%d de %B de %Y")
+        
+        events_result = (
+            service.events()
+            .list(
+                calendarId="primary",
+                timeMin=time_min,
+                timeMax=time_max,
+                singleEvents=True,
+                orderBy="startTime",
+            )
+            .execute()
+        )
+        return events_result.get("items", []), formatted_date
+    except Exception as e:
+        print(f"Erro ao listar eventos: {e}")
+        return [], "data não especificada"
 
-    events_result = service.events().list(
-        calendarId="primary", timeMin=time_min, timeMax=time_max,
-        singleEvents=True, orderBy="startTime"
-    ).execute()
-    return events_result.get("items", []), formatted_date
-
-def check_availability(service, start_time_str, end_time_str):
-    body = {
-        "timeMin": start_time_str, "timeMax": end_time_str, "timeZone": TIMEZONE,
-        "items": [{"id": "primary"}]
-    }
-    freebusy_result = service.freebusy().query(body=body).execute()
-    return len(freebusy_result.get('calendars', {}).get('primary', {}).get('busy', [])) > 0
 
 def find_and_delete_event(service, event_summary, event_date=None):
     events, _ = list_upcoming_events(service, event_date)

@@ -1,8 +1,9 @@
-# google_calendar_service.py (versão com busca e deleção)
+# google_calendar_service.py (versão com criação de Google Meet)
 
 import datetime
 import os.path
 import locale
+import uuid # Usado para gerar IDs de requisição únicos para o Meet
 from unidecode import unidecode
 
 try:
@@ -34,15 +35,34 @@ def get_calendar_service():
             token.write(creds.to_json())
     return build("calendar", "v3", credentials=creds)
 
-def create_event(service, summary, start_time, end_time, attendees=None, description=""):
-    # Esta função não muda
+# --- MELHORIA: Adicionado suporte para 'conference_solution' ---
+def create_event(service, summary, start_time, end_time, attendees=None, description="", location=None, conference_solution=None):
+    """Cria um novo evento, com suporte opcional para Google Meet."""
     event_body = {
-        "summary": summary, "description": description,
+        "summary": summary,
+        "description": description,
+        "location": location,
         "start": {"dateTime": start_time, "timeZone": TIMEZONE},
         "end": {"dateTime": end_time, "timeZone": TIMEZONE},
         "attendees": [{"email": email} for email in attendees] if attendees else [],
     }
-    return service.events().insert(calendarId="primary", body=event_body, sendUpdates="all").execute()
+
+    # Se a LLM pediu por uma videochamada, adicione a conferência
+    if conference_solution == "Google Meet":
+        event_body["conferenceData"] = {
+            "createRequest": {
+                "requestId": f"{uuid.uuid4().hex}",
+                "conferenceSolutionKey": {"type": "hangoutsMeet"}
+            }
+        }
+
+    return service.events().insert(
+        calendarId="primary", 
+        body=event_body, 
+        sendUpdates="all",
+        conferenceDataVersion=1 # Necessário para criar a conferência
+    ).execute()
+
 
 def list_events_in_range(service, start_date_str=None, end_date_str=None):
     # Esta função não muda
@@ -74,42 +94,29 @@ def list_events_in_range(service, start_date_str=None, end_date_str=None):
         print(f"Erro ao listar eventos: {e}")
         return [], "o período solicitado"
 
-# --- NOVA FUNÇÃO: Encontra um evento específico ---
 def find_event_by_keywords(service, keywords):
-    """Encontra o primeiro evento nos próximos 30 dias que corresponde a todas as palavras-chave."""
+    # Esta função não muda
     now = datetime.datetime.utcnow().isoformat() + 'Z'
     thirty_days_later = (datetime.datetime.utcnow() + datetime.timedelta(days=30)).isoformat() + 'Z'
-    
     events_result = service.events().list(
         calendarId='primary', timeMin=now, timeMax=thirty_days_later,
         singleEvents=True, orderBy='startTime'
     ).execute()
     events = events_result.get('items', [])
-
-    if not events:
-        return None
-
-    # Normaliza as palavras-chave (remove acentos, minúsculas)
+    if not events: return None
     normalized_keywords = [unidecode(k.lower()) for k in keywords]
-
     for event in events:
         summary = event.get('summary', '')
         normalized_summary = unidecode(summary.lower())
-        
-        # Verifica se todas as palavras-chave estão no título do evento
         if all(keyword in normalized_summary for keyword in normalized_keywords):
-            return event  # Retorna o primeiro evento que corresponder
-
+            return event
     return None
 
-# --- NOVA FUNÇÃO: Deleta um evento pelo seu ID ---
 def delete_event(service, event_id):
-    """Deleta um evento da agenda usando seu ID."""
+    # Esta função não muda
     try:
         service.events().delete(calendarId='primary', eventId=event_id).execute()
         return True
     except HttpError as e:
         print(f"Erro ao deletar evento: {e}")
         return False
-
-# A função find_and_delete_event não é mais necessária, pois separamos as responsabilidades

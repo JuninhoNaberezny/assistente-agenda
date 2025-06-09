@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Assistente de Agenda</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #f0f2f5; margin: 0; display: flex; justify-content: center; align-items: center; height: 100vh; }
+        .chat-container { width: 100%; max-width: 600px; height: 80vh; background-color: white; border-radius: 12px; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1); display: flex; flex-direction: column; overflow: hidden; }
+        .chat-header { background-color: #4A90E2; color: white; padding: 16px; font-size: 1.2em; font-weight: bold; text-align: center; }
+        .chat-messages { flex-grow: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 15px; }
+        .message { padding: 10px 15px; border-radius: 18px; max-width: 75%; line-height: 1.4; }
+        .user-message { background-color: #4A90E2; color: white; align-self: flex-end; border-bottom-right-radius: 4px; }
+        .assistant-message { background-color: #e9e9eb; color: #333; align-self: flex-start; border-bottom-left-radius: 4px; }
+        .chat-input-form { display: flex; padding: 15px; border-top: 1px solid #ddd; }
+        #message-input { flex-grow: 1; border: 1px solid #ccc; border-radius: 20px; padding: 10px 15px; font-size: 1em; outline: none; }
+        #send-button { background-color: #4A90E2; color: white; border: none; border-radius: 50%; width: 44px; height: 44px; margin-left: 10px; cursor: pointer; font-size: 1.5em; display: flex; align-items: center; justify-content: center; }
+        .typing-indicator { align-self: flex-start; color: #999; font-style: italic; }
+    </style>
+</head>
+<body>
+<div class="chat-container">
+    <div class="chat-header">Assistente Pessoal de Agenda</div>
+    <div class="chat-messages" id="chat-messages">
+        <div class="message assistant-message">Olá! Como posso ajudar com sua agenda hoje? Tente dizer algo como "Marcar dentista para sexta às 15h" ou "O que eu tenho para amanhã?".</div>
+    </div>
+    <form class="chat-input-form" id="chat-form">
+        <input type="text" id="message-input" placeholder="Digite sua mensagem..." autocomplete="off" required>
+        <button id="send-button" type="submit">➤</button>
+    </form>
+</div>
+<script>
+    const chatForm = document.getElementById('chat-form'), messageInput = document.getElementById('message-input'), chatMessages = document.getElementById('chat-messages');
+    chatForm.addEventListener('submit', async e => {
+        e.preventDefault();
+        const userMessage = messageInput.value.trim();
+        if (!userMessage) return;
+        appendMessage(userMessage, 'user-message');
+        messageInput.value = '';
+        showTypingIndicator();
+        try {
+            const response = await fetch('/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: userMessage }) });
+            const data = await response.json();
+            removeTypingIndicator();
+            appendMessage(data.response, 'assistant-message');
+        } catch (error) {
+            removeTypingIndicator();
+            appendMessage('Desculpe, não consegui me conectar. Tente novamente mais tarde.', 'assistant-message');
+        }
+    });
+    function appendMessage(message, className) {
+        const el = document.createElement('div');
+        el.classList.add('message', className);
+        el.innerHTML = message;
+        chatMessages.appendChild(el);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+    function showTypingIndicator() {
+        const el = document.createElement('div');
+        el.id = 'typing-indicator';
+        el.classList.add('message', 'assistant-message', 'typing-indicator');
+        el.innerText = 'Digitando...';
+        chatMessages.appendChild(el);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+    function removeTypingIndicator() {
+        document.getElementById('typing-indicator')?.remove();
+    }
+</script>
+</body>
+</html>

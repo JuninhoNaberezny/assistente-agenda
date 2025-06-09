@@ -5,6 +5,7 @@ from flask import Flask, request, jsonify, render_template, session
 from rich.console import Console
 from datetime import datetime
 import json
+from dotenv import load_dotenv # <-- LINHA ADICIONADA
 
 from llm_processor import process_user_prompt
 from google_calendar_service import (
@@ -15,8 +16,11 @@ from google_calendar_service import (
     delete_event
 )
 
+load_dotenv() # <-- LINHA ADICIONADA
+
 app = Flask(__name__)
-app.secret_key = os.urandom(24) 
+# --- MELHORIA APLICADA: Chave secreta fixa ---
+app.secret_key = os.getenv("FLASK_SECRET_KEY", "fallback-key-for-dev")
 
 console = Console()
 
@@ -131,8 +135,8 @@ def chat():
     session['chat_history'].append({"role": "model", "parts": [{"text": response_text}]})
     
     # Limpa o histórico apenas se uma ação definitiva (criar/cancelar) foi tomada
-    if action_taken:
-        session.pop('chat_history', None)
+    # if action_taken:
+    #     session.pop('chat_history', None)
 
     console.print(f"[green]Assistente:[/green] {response_text.replace('<br>', ' ').replace('<ul>', '', 1).replace('</ul>', '').replace('<li>', ' - ')}")
     return jsonify({"response": response_text})

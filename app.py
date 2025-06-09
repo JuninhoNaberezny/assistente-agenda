@@ -1,4 +1,4 @@
-# app.py (versão com orquestração de ações compostas)
+# app.py (versão com orquestração de Google Meet)
 
 import os
 from flask import Flask, request, jsonify, render_template, session
@@ -11,8 +11,8 @@ from google_calendar_service import (
     get_calendar_service,
     create_event,
     list_events_in_range,
-    find_event_by_keywords, # <<< MUDANÇA
-    delete_event            # <<< MUDANÇA
+    find_event_by_keywords,
+    delete_event
 )
 
 app = Flask(__name__)
@@ -41,18 +41,21 @@ def chat():
     if 'chat_history' not in session:
         session['chat_history'] = []
     
+    # Adiciona a mensagem atual ao histórico ANTES de enviar para a LLM
     session['chat_history'].append({"role": "user", "parts": [{"text": user_message}]})
-    session['chat_history'] = session['chat_history'][-10:] 
+    session['chat_history'] = session['chat_history'][-10:] # Mantém o histórico com um tamanho razoável
 
     console.print(f"\n[cyan]Usuário:[/cyan] {user_message}")
     
     try:
+        # Passa o histórico da sessão para a LLM
         llm_response = process_user_prompt(session['chat_history'])
         console.print(f"[magenta]LLM Response:[/magenta] {json.dumps(llm_response, indent=2, ensure_ascii=False)}")
         
         intent = llm_response.get("intent")
         entities = llm_response.get("entities", {})
-        explanation = llm_response.get("explanation")
+        # Garante que a explanation sempre tenha um valor
+        explanation = llm_response.get("explanation", "Ok, entendi.")
 
     except Exception as e:
         console.print(f"[bold red]Erro ao processar com a LLM:[/bold red] {e}")
@@ -63,10 +66,15 @@ def chat():
 
     try:
         if intent == "create_event":
-            if all(k in entities for k in ["summary", "start_time", "end_time"]):
+            # Passa as entidades diretamente para a função de criação
+            if "summary" in entities and "start_time" in entities and "end_time" in entities:
                 event = create_event(calendar_service, **entities)
                 response_text = f"{explanation} <a href='{event.get('htmlLink')}' target='_blank'>Pode confirmar o evento aqui.</a>"
                 action_taken = True
+            else:
+                # Se faltar algo, a própria LLM deve ter pedido para esclarecer
+                response_text = explanation
+
 
         elif intent == "list_events":
             start_date = entities.get("start_date")
@@ -82,24 +90,22 @@ def chat():
                     for e in events
                 ])
                 response_text = f"Com certeza! Para {formatted_range}, seus compromissos são:<br><ul>{event_list_html}</ul>"
-            action_taken = True
-        
-        # --- MELHORIA: Lógica para a nova intenção de reagendamento ---
+            # Não consideramos 'listar' uma ação que limpa o histórico, para manter o contexto
+            action_taken = False
+
         elif intent == "reschedule_or_modify_event":
             keywords = entities.get("source_event_keywords")
             modification = entities.get("modification", {})
             action = modification.get("action")
             
-            # Passo 1: Encontrar o evento original
             source_event = find_event_by_keywords(calendar_service, keywords)
             
             if not source_event:
-                response_text = f"Desculpe, não consegui encontrar um evento com os detalhes '{' '.join(keywords)}' na sua agenda."
+                response_text = f"Desculpe, não consegui encontrar um evento com os detalhes '{' '.join(keywords)}' na sua agenda para modificar."
             else:
                 event_id = source_event['id']
                 event_summary = source_event['summary']
                 
-                # Passo 2: Deletar o evento original
                 delete_success = delete_event(calendar_service, event_id)
                 
                 if not delete_success:
@@ -108,23 +114,23 @@ def chat():
                     if action == "cancel":
                         response_text = f"Pronto! O evento '{event_summary}' foi cancelado com sucesso."
                     elif action == "reschedule":
-                        # Passo 3: Criar o novo evento
-                        new_summary = modification.get("new_summary", event_summary) # Usa o nome antigo se um novo não for fornecido
-                        
-                        # Usa o horário antigo se um novo não for fornecido
+                        # Usa os detalhes do evento antigo como base
+                        new_summary = modification.get("new_summary", event_summary)
                         start_time = modification.get("new_start_time", source_event['start'].get('dateTime'))
                         end_time = modification.get("new_end_time", source_event['end'].get('dateTime'))
 
                         new_event = create_event(calendar_service, new_summary, start_time, end_time)
-                        response_text = f"Ok! Cancelei '{event_summary}' e agendei '{new_summary}' no mesmo horário. <a href='{new_event.get('htmlLink')}' target='_blank'>Confirme aqui.</a>"
-
+                        response_text = f"Ok! Cancelei '{event_summary}' e agendei '{new_summary}'. <a href='{new_event.get('htmlLink')}' target='_blank'>Confirme aqui.</a>"
             action_taken = True
         
     except Exception as e:
         console.print(f"[bold red]ERRO ao executar a ação do calendário:[/bold red] {e}")
         response_text = "Peço desculpas, mas encontrei um erro ao tentar acessar sua agenda. Pode tentar novamente?"
 
+    # Adiciona a resposta do assistente ao histórico
     session['chat_history'].append({"role": "model", "parts": [{"text": response_text}]})
+    
+    # Limpa o histórico apenas se uma ação definitiva (criar/cancelar) foi tomada
     if action_taken:
         session.pop('chat_history', None)
 

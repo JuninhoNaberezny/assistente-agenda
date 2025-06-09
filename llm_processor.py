@@ -1,8 +1,8 @@
-# llm_processor.py (versão com raciocínio avançado, memória e Google Meet)
+# llm_processor.py (versão corrigida)
 
 import os
 import json
-from datetime import datetime, timedelta
+from datetime import datetime
 import google.generativeai as genai
 from dotenv import load_dotenv
 
@@ -14,8 +14,13 @@ try:
 except Exception as e:
     print(f"Erro ao configurar a API do Gemini: {e}")
 
-# --- MELHORIA: RACIOCÍNIO AVANÇADO ---
-SYSTEM_INSTRUCTIONS = f"""
+# --- MELHORIA APLICADA: Instruções dinâmicas ---
+def get_system_instructions():
+    """
+    Gera as instruções do sistema com a data atual para garantir que a IA
+    sempre tenha o contexto de tempo correto.
+    """
+    return f"""
 Você é 'Alex', um assistente executivo virtual. Sua personalidade é proativa, eficiente e com excelente memória contextual.
 
 **SUAS DIRETRIZES:**
@@ -76,7 +81,11 @@ Você é 'Alex', um assistente executivo virtual. Sua personalidade é proativa,
 """
 
 def process_user_prompt(chat_history: list) -> dict:
-    model = genai.GenerativeModel(model_name='gemini-1.5-flash-latest', system_instruction=SYSTEM_INSTRUCTIONS)
+    # --- MELHORIA APLICADA: Usa as instruções dinâmicas ---
+    model = genai.GenerativeModel(
+        model_name='gemini-1.5-flash-latest',
+        system_instruction=get_system_instructions()
+    )
     generation_config = genai.types.GenerationConfig(response_mime_type="application/json")
     try:
         response = model.generate_content(chat_history, generation_config=generation_config)
@@ -85,4 +94,3 @@ def process_user_prompt(chat_history: list) -> dict:
     except Exception as e:
         print(f"Erro ao decodificar JSON da LLM: {e}")
         return {"intent": "unknown", "entities": {}, "explanation": "Peço desculpas, tive uma pequena dificuldade. Poderia reformular?"}
-

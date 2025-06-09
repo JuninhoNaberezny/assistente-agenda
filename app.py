@@ -1,4 +1,4 @@
-# app.py (VERSÃO FINAL E CORRETA)
+# app.py (versão com orquestração de ações compostas)
 
 import os
 from flask import Flask, request, jsonify, render_template, session
@@ -11,7 +11,8 @@ from google_calendar_service import (
     get_calendar_service,
     create_event,
     list_events_in_range,
-    find_and_delete_event
+    find_event_by_keywords, # <<< MUDANÇA
+    delete_event            # <<< MUDANÇA
 )
 
 app = Flask(__name__)
@@ -83,6 +84,42 @@ def chat():
                 response_text = f"Com certeza! Para {formatted_range}, seus compromissos são:<br><ul>{event_list_html}</ul>"
             action_taken = True
         
+        # --- MELHORIA: Lógica para a nova intenção de reagendamento ---
+        elif intent == "reschedule_or_modify_event":
+            keywords = entities.get("source_event_keywords")
+            modification = entities.get("modification", {})
+            action = modification.get("action")
+            
+            # Passo 1: Encontrar o evento original
+            source_event = find_event_by_keywords(calendar_service, keywords)
+            
+            if not source_event:
+                response_text = f"Desculpe, não consegui encontrar um evento com os detalhes '{' '.join(keywords)}' na sua agenda."
+            else:
+                event_id = source_event['id']
+                event_summary = source_event['summary']
+                
+                # Passo 2: Deletar o evento original
+                delete_success = delete_event(calendar_service, event_id)
+                
+                if not delete_success:
+                    response_text = "Encontrei o evento, mas tive um problema ao tentar cancelá-lo."
+                else:
+                    if action == "cancel":
+                        response_text = f"Pronto! O evento '{event_summary}' foi cancelado com sucesso."
+                    elif action == "reschedule":
+                        # Passo 3: Criar o novo evento
+                        new_summary = modification.get("new_summary", event_summary) # Usa o nome antigo se um novo não for fornecido
+                        
+                        # Usa o horário antigo se um novo não for fornecido
+                        start_time = modification.get("new_start_time", source_event['start'].get('dateTime'))
+                        end_time = modification.get("new_end_time", source_event['end'].get('dateTime'))
+
+                        new_event = create_event(calendar_service, new_summary, start_time, end_time)
+                        response_text = f"Ok! Cancelei '{event_summary}' e agendei '{new_summary}' no mesmo horário. <a href='{new_event.get('htmlLink')}' target='_blank'>Confirme aqui.</a>"
+
+            action_taken = True
+        
     except Exception as e:
         console.print(f"[bold red]ERRO ao executar a ação do calendário:[/bold red] {e}")
         response_text = "Peço desculpas, mas encontrei um erro ao tentar acessar sua agenda. Pode tentar novamente?"
@@ -91,7 +128,7 @@ def chat():
     if action_taken:
         session.pop('chat_history', None)
 
-    console.print(f"[green]Assistente:[/green] {response_text.replace('<br>', ' ').replace('<ul>', '').replace('</ul>', '').replace('<li>', ' - ')}")
+    console.print(f"[green]Assistente:[/green] {response_text.replace('<br>', ' ').replace('<ul>', '', 1).replace('</ul>', '').replace('<li>', ' - ')}")
     return jsonify({"response": response_text})
 
 if __name__ == '__main__':

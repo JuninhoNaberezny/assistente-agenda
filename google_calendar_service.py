@@ -46,7 +46,7 @@ def list_events_in_range(service, start_date_str=None, end_date_str=None):
         time_min_dt = datetime.datetime.combine(start_date_obj, datetime.time.min).astimezone(datetime.timezone.utc)
         time_max_dt = datetime.datetime.combine(end_date_obj, datetime.time.max).astimezone(datetime.timezone.utc)
         if start_date_obj == end_date_obj:
-            formatted_range = start_date_obj.strftime("o dia %d de %B")
+            formatted_range = f"o dia {start_date_obj.strftime('%d de %B')}"
         else:
             formatted_range = f"o período de {start_date_obj.strftime('%d/%m')} a {end_date_obj.strftime('%d/%m')}"
         events_result = service.events().list(calendarId="primary", timeMin=time_min_dt.isoformat(), timeMax=time_max_dt.isoformat(), singleEvents=True, orderBy="startTime").execute()
@@ -55,22 +55,13 @@ def list_events_in_range(service, start_date_str=None, end_date_str=None):
         print(f"Erro ao listar eventos: {e}")
         return [], "o período solicitado"
 
-# Esta é a função que estava causando o erro de importação.
-# Garanta que este arquivo está salvo com este conteúdo.
 def find_events_by_query(service, query_text):
-    """
-    Busca eventos futuros usando a busca de texto livre da API do Google Calendar.
-    """
     now = datetime.datetime.utcnow().isoformat() + 'Z'
     one_year_later = (datetime.datetime.utcnow() + datetime.timedelta(days=365)).isoformat() + 'Z'
     try:
         events_result = service.events().list(
-            calendarId='primary',
-            q=query_text,
-            timeMin=now,
-            timeMax=one_year_later,
-            singleEvents=True,
-            orderBy='startTime'
+            calendarId='primary', q=query_text, timeMin=now,
+            timeMax=one_year_later, singleEvents=True, orderBy='startTime'
         ).execute()
         return events_result.get('items', [])
     except Exception as e:
@@ -78,18 +69,8 @@ def find_events_by_query(service, query_text):
         return []
 
 def find_event_by_keywords(service, keywords):
-    now = datetime.datetime.utcnow().isoformat() + 'Z'
-    thirty_days_later = (datetime.datetime.utcnow() + datetime.timedelta(days=30)).isoformat() + 'Z'
-    events_result = service.events().list(calendarId='primary', timeMin=now, timeMax=thirty_days_later, singleEvents=True, orderBy='startTime').execute()
-    events = events_result.get('items', [])
-    if not events: return None
-    normalized_keywords = [unidecode(k.lower()) for k in keywords]
-    for event in events:
-        summary = event.get('summary', '')
-        normalized_summary = unidecode(summary.lower())
-        if all(keyword in normalized_summary for keyword in normalized_keywords):
-            return event
-    return None
+    # Esta função pode ser mantida para usos futuros ou removida se não for mais necessária
+    pass
 
 def delete_event(service, event_id):
     try:

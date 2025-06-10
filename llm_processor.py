@@ -1,4 +1,4 @@
-# llm_processor.py (versão com aprendizado explícito)
+# llm_processor.py
 
 import os
 import json
@@ -12,19 +12,17 @@ load_dotenv()
 
 try:
     api_key = os.getenv("GEMINI_API_KEY")
-    genai.configure(api_key=api_key)
+    if api_key:
+        genai.configure(api_key=api_key) # type: ignore
 except Exception as e:
     print(f"Erro ao configurar a API do Gemini: {e}")
 
 def get_system_instructions():
-    """
-    Gera as instruções do sistema, injetando a data atual e exemplos de aprendizado
-    baseados em feedbacks anteriores de forma mais explícita.
-    """
+    # Esta função não precisa de alterações
     learning_examples = ""
     feedback_items = load_feedback()
-
     if feedback_items:
+        # A lógica de aprendizado existente é mantida
         learning_section = ["\n**APRENDIZADO CONTÍNUO (erros passados e o comportamento esperado):**"]
         for item in feedback_items:
             user_trigger_prompt = "N/A"
@@ -46,46 +44,58 @@ def get_system_instructions():
             )
             learning_section.append(example)
         learning_examples = "\n".join(learning_section)
-
+    
     return f"""
-Você é 'Alex', um assistente executivo virtual. Sua personalidade é proativa, eficiente e com excelente memória contextual.
+Você é 'Alex', um assistente executivo virtual proativo e eficiente.
 
 **SUAS DIRETRIZES:**
-1.  **USE O CONTEXTO AGRESSIVAMENTE:** Sua principal tarefa é entender o pedido do usuário com base no histórico da conversa. Antes de pedir informações, verifique se elas já foram mencionadas.
-2.  **SEMPRE RETORNE UMA `explanation`:** Toda resposta JSON DEVE ter uma `explanation` clara e amigável. Se você não tem informação suficiente para preencher as entidades de uma intenção, sua `explanation` DEVE ser uma pergunta para obter os dados que faltam.
-3.  **SEMPRE RETORNE UM JSON VÁLIDO.**
+1.  **USE O CONTEXTO AGRESSIVAMENTE:** Analise o histórico da conversa para evitar perguntas redundantes.
+2.  **ESTRUTURA JSON OBRIGATÓRIA:** Sua resposta DEVE ser um único objeto JSON com `intent`, `entities` (um objeto aninhado) e `explanation`.
+3.  **SEJA DIRETO:** Se o usuário pergunta sobre um evento por nome (ex: "Quando é a reunião de projeto?"), use a intenção `find_event` imediatamente. Não peça datas se o nome do evento for suficiente para uma busca.
+
+**EXEMPLO DE FORMATO DE SAÍDA OBRIGATÓRIO:**
+```json
+{{
+  "intent": "find_event",
+  "entities": {{
+    "keywords": ["reunião", "projeto"]
+  }},
+  "explanation": "Estou procurando pela 'reunião de projeto' na sua agenda."
+}}
+```
 
 **CONTEXTO ATUAL:** A data de hoje é {datetime.now().strftime('%Y-%m-%d')}.
 {learning_examples}
 
-**INTENÇÕES E ENTIDADES (formato de saída JSON):**
-
--   **`create_event`**: Criar novo evento.
-    -   ENTIDADES: `summary`, `start_time`, `end_time`, `attendees`, `location`, `conference_solution`.
-    -   SE FALTAR ALGO: Pergunte. (Ex: "Ok, para quando devo marcar?")
-
--   **`list_events`**: Listar compromissos.
-    -   ENTIDADES: `start_date`, `end_date`.
-    -   SE FALTAR ALGO: Pergunte sobre o período. (Ex: "Claro, para qual período você gostaria de ver os compromissos?").
-
--   **`reschedule_or_modify_event`**: Cancelar ou reagendar.
-    -   ENTIDADES: `source_event_keywords`, `modification` (`action`, `new_summary`, etc.).
-    -   SE FALTAR ALGO: Peça detalhes sobre qual evento modificar e para o quê.
-
--   **`clarify_details`**: Sua intenção quando você precisa fazer uma pergunta para esclarecer um pedido vago.
--   **`unknown`**: Para saudações ou pedidos fora do escopo.
+**INTENÇÕES E SUAS ENTIDADES (para preencher o campo `entities`):**
+-   `find_event`: Para encontrar um evento por nome ou palavras-chave. ENTIDADES: `keywords`.
+-   `list_events`: Apenas para listar eventos por um período de tempo claro. ENTIDADES: `start_date`, `end_date`.
+-   `create_event`: Criar novo evento. ENTIDADES: `summary`, `start_time`, etc.
+-   `reschedule_or_modify_event`: Cancelar ou reagendar. ENTIDADES: `source_event_keywords`, `modification`.
+-   `clarify_details`: Para pedir mais informações.
+-   `unknown`: Para saudações ou pedidos fora do escopo.
 """
 
 def process_user_prompt(chat_history: list) -> dict:
-    model = genai.GenerativeModel(
+    model = genai.GenerativeModel( # type: ignore
         model_name='gemini-1.5-flash-latest',
         system_instruction=get_system_instructions()
     )
-    generation_config = genai.types.GenerationConfig(response_mime_type="application/json")
+    
+    generation_config = genai.GenerationConfig(response_mime_type="application/json") # type: ignore
+    
     try:
         response = model.generate_content(chat_history, generation_config=generation_config)
-        cleaned_json = response.text.strip().replace("```json", "").replace("```", "")
+        cleaned_json = response.text.strip().replace("```json", "").replace("```", "").strip()
         return json.loads(cleaned_json)
     except Exception as e:
         print(f"Erro ao decodificar JSON da LLM: {e}")
+        try:
+            start = cleaned_json.find('{')
+            end = cleaned_json.rfind('}') + 1
+            if start != -1 and end != 0:
+                return json.loads(cleaned_json[start:end])
+        except Exception as inner_e:
+            print(f"Falha na tentativa de extração de JSON: {inner_e}")
+
         return {"intent": "unknown", "entities": {}, "explanation": "Peço desculpas, tive uma pequena dificuldade. Poderia reformular?"}

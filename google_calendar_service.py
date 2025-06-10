@@ -29,42 +29,6 @@ def get_calendar_service():
             token.write(creds.to_json())
     return build("calendar", "v3", credentials=creds)
 
-def find_events_by_query(service, query_text, start_date_str=None, end_date_str=None):
-    """
-    Busca eventos de forma inteligente com formato de data corrigido.
-    """
-    try:
-        if not start_date_str:
-            time_min_dt = datetime.datetime.now(datetime.timezone.utc)
-            time_max_dt = time_min_dt + datetime.timedelta(days=365)
-        else:
-            time_min_dt = datetime.datetime.fromisoformat(start_date_str).astimezone(datetime.timezone.utc)
-            if end_date_str:
-                end_date_obj = datetime.datetime.fromisoformat(end_date_str).date()
-            else:
-                end_date_obj = time_min_dt.date()
-            time_max_dt = datetime.datetime.combine(end_date_obj, datetime.time.max).astimezone(datetime.timezone.utc)
-
-        # CORREÇÃO: Formata a data/hora para o padrão RFC3339 que a API do Google aceita (com 'Z' para UTC).
-        time_min = time_min_dt.isoformat().split('+')[0] + 'Z'
-        time_max = time_max_dt.isoformat().split('+')[0] + 'Z'
-
-        events_result = service.events().list(
-            calendarId='primary',
-            q=query_text,
-            timeMin=time_min,
-            timeMax=time_max,
-            singleEvents=True,
-            orderBy='startTime'
-        ).execute()
-
-        return events_result.get('items', [])
-    except (HttpError, ParserError, Exception) as e:
-        print(f"Erro ao buscar eventos com a query '{query_text}': {e}")
-        return []
-
-# As outras funções (create_event, list_events_in_range, delete_event) não precisam de alteração,
-# mas é bom garantir que todas usem o mesmo padrão de formatação de data se forem modificadas.
 def create_event(service, summary, start_time, end_time, attendees=None, description="", location=None, conference_solution=None):
     event_body = { "summary": summary, "description": description, "location": location, "start": {"dateTime": start_time, "timeZone": TIMEZONE}, "end": {"dateTime": end_time, "timeZone": TIMEZONE}, "attendees": [{"email": email} for email in attendees] if attendees else [] }
     if conference_solution == "Google Meet": event_body["conferenceData"] = { "createRequest": { "requestId": f"{uuid.uuid4().hex}", "conferenceSolutionKey": {"type": "hangoutsMeet"} } }
@@ -76,13 +40,14 @@ def list_events_in_range(service, start_date_str=None, end_date_str=None):
         end_date_obj = datetime.datetime.fromisoformat(end_date_str).date() if end_date_str else start_date_obj
         time_min_dt = datetime.datetime.combine(start_date_obj, datetime.time.min).astimezone(datetime.timezone.utc)
         time_max_dt = datetime.datetime.combine(end_date_obj, datetime.time.max).astimezone(datetime.timezone.utc)
-        
-        # CORREÇÃO (preventiva): Garante o formato correto aqui também.
         time_min = time_min_dt.isoformat().split('+')[0] + 'Z'
         time_max = time_max_dt.isoformat().split('+')[0] + 'Z'
 
-        if start_date_obj == end_date_obj: formatted_range = f"o dia {start_date_obj.strftime('%d de %B')}"
-        else: formatted_range = f"o período de {start_date_obj.strftime('%d/%m')} a {end_date_obj.strftime('%d/%m')}"
+        # CORREÇÃO: Usa um formato de data numérico para evitar problemas de idioma.
+        if start_date_obj == end_date_obj:
+            formatted_range = f"o dia {start_date_obj.strftime('%d/%m/%Y')}"
+        else:
+            formatted_range = f"o período de {start_date_obj.strftime('%d/%m')} a {end_date_obj.strftime('%d/%m')}"
         
         events_result = service.events().list(calendarId="primary", timeMin=time_min, timeMax=time_max, singleEvents=True, orderBy="startTime").execute()
         return events_result.get("items", []), formatted_range
@@ -90,7 +55,34 @@ def list_events_in_range(service, start_date_str=None, end_date_str=None):
         print(f"Erro ao listar eventos: {e}")
         return [], "o período solicitado"
 
+def find_events_by_query(service, query_text, start_date_str=None, end_date_str=None):
+    try:
+        if not start_date_str:
+            time_min_dt = datetime.datetime.now(datetime.timezone.utc)
+            time_max_dt = time_min_dt + datetime.timedelta(days=365)
+        else:
+            time_min_dt = datetime.datetime.fromisoformat(start_date_str).astimezone(datetime.timezone.utc)
+            end_date_obj = datetime.datetime.fromisoformat(end_date_str).date() if end_date_str else time_min_dt.date()
+            time_max_dt = datetime.datetime.combine(end_date_obj, datetime.time.max).astimezone(datetime.timezone.utc)
+        time_min = time_min_dt.isoformat().split('+')[0] + 'Z'
+        time_max = time_max_dt.isoformat().split('+')[0] + 'Z'
+        events_result = service.events().list( calendarId='primary', q=query_text, timeMin=time_min, timeMax=time_max, singleEvents=True, orderBy='startTime').execute()
+        return events_result.get('items', [])
+    except (HttpError, ParserError, Exception) as e:
+        print(f"Erro ao buscar eventos com a query '{query_text}': {e}")
+        return []
+
+def update_event(service, event_id, update_body):
+    """Atualiza um evento existente usando o método patch."""
+    try:
+        updated_event = service.events().patch( calendarId='primary', eventId=event_id, body=update_body, sendUpdates='all').execute()
+        return updated_event
+    except HttpError as e:
+        print(f"Erro ao atualizar o evento {event_id}: {e}")
+        return None
+
 def delete_event(service, event_id):
+    """Deleta um evento pelo seu ID."""
     try:
         service.events().delete(calendarId='primary', eventId=event_id).execute()
         return True

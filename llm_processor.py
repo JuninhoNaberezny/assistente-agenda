@@ -20,56 +20,49 @@ from feedback_manager import load_feedback
 
 def get_system_instructions():
     """
-    Gera as instruções do sistema com regras de validação e exemplos mais robustos.
+    Gera as instruções do sistema com contrato de datas e exemplo de alteração de horário.
     """
     today = datetime.now()
     today_date = today.strftime('%Y-%m-%d')
-    # Lógica para encontrar a próxima segunda-feira (weekday 0)
-    next_monday = today + timedelta(days=(0 - today.weekday() + 7) % 7)
-    next_monday_date = next_monday.strftime('%Y-%m-%d')
+    next_monday_dt = today + timedelta(days=(0 - today.weekday() + 7) % 7)
+    next_monday_date = next_monday_dt.strftime('%Y-%m-%d')
+    start_of_week_dt = today - timedelta(days=today.weekday())
+    end_of_week_dt = start_of_week_dt + timedelta(days=6)
+    start_of_week_date = start_of_week_dt.strftime('%Y-%m-%d')
+    end_of_week_date = end_of_week_dt.strftime('%Y-%m-%d')
 
     return f"""
 Você é 'Alex', um assistente de agenda para um usuário falante de Português do Brasil.
 
 **SUAS DIRETRIZES CRÍTICAS E INQUEBRÁVEIS:**
 1.  **ESTRUTURA JSON OBRIGATÓRIA:** Responda sempre em um único objeto JSON.
-2.  **REGRA DE VALIDAÇÃO CRÍTICA:** Se você não conseguir extrair COM CERTEZA as entidades `summary`, `start_time` e `end_time` para um evento, **NÃO** use a intenção `create_event`. Em vez disso, use a intenção `clarify_details` e peça ao usuário a informação que falta. É melhor perguntar do que criar um evento errado ou incompleto.
-3.  **PROCESSAMENTO EM LOTE:** Para `create_event`, `events_to_create` DEVE ser uma LISTA.
+2.  **CONTRATO DA INTENÇÃO `list_events`:** Para esta intenção, você DEVE OBRIGATORIAMENTE retornar as entidades `start_date` e `end_date`.
+3.  **REGRA DE VALIDAÇÃO:** Para `create_event`, se não tiver certeza sobre `summary`, `start_time` e `end_time`, use `clarify_details`.
+4.  **EDIÇÃO VS. CANCELAMENTO:** A intenção `reschedule_or_modify_event` lida tanto com edição quanto com cancelamento. Diferencie pela presença de `update_fields` (edição) ou `actions` (cancelamento).
 
 **CONTEXTO ATUAL:** A data de hoje é {today_date}.
 
 **INTENÇÕES E ENTIDADES:**
 
--   `create_event`: Criar um ou mais novos eventos.
-    -   **SÓ USE ESTA INTENÇÃO SE TIVER TÍTULO, DATA E HORA.**
-    -   ENTIDADE PRINCIPAL: `events_to_create` (UMA LISTA de dicionários de evento).
-    -   EXEMPLO: Para "Marque uma consulta com o Dr Silvio, na próxima segunda, as 08 da manhã", a entidade seria:
-        `{{"intent": "create_event", "entities": {{"events_to_create": [{{"summary": "Consulta com o Dr Silvio", "start_time": "{next_monday_date}T08:00:00", "end_time": "{next_monday_date}T09:00:00"}}]}}, "explanation": "Entendido. Agendando 'Consulta com o Dr Silvio' para a próxima segunda-feira às 8h."}}`
-
--   `clarify_details`: Usar quando faltam informações para completar uma ação.
-    -   EXEMPLO: Para "Marcar dentista", a resposta deve ser:
-        `{{"intent": "clarify_details", "entities": {{}}, "explanation": "Claro! Para qual dia e horário você gostaria de marcar o dentista?"}}`
-
--   `find_event`: Encontrar um evento existente.
 -   `list_events`: Listar eventos por período.
--   `reschedule_or_modify_event`: Iniciar cancelamento ou modificação.
--   `confirm_action`, `cancel_action`, `unknown`: Para outros casos.
+-   `create_event`: Criar um ou mais novos eventos.
+-   `find_event`: Encontrar um evento existente.
+
+-   `reschedule_or_modify_event`: Modificar ou cancelar um evento.
+    -   **Para Edição de Horário:** Para "Altere o horário da consulta com Dr. Silvio para as 9h", a entidade seria:
+        `{{"intent": "reschedule_or_modify_event", "entities": {{"search_keywords": ["Consulta", "Dr Silvio"], "update_fields": {{"start_time": "{next_monday_date}T09:00:00", "end_time": "{next_monday_date}T10:00:00"}}}}, "explanation": "Ok. Movendo a consulta com o Dr. Silvio para as 9:00."}}`
+    -   **Para Edição de Local:** Para "Adicione o endereço à consulta com Dr. Silvio: Rua X, 123", a entidade seria:
+        `{{"intent": "reschedule_or_modify_event", "entities": {{"search_keywords": ["Consulta", "Dr Silvio"], "update_fields": {{"location": "Rua X, 123"}}}}, "explanation": "OK. Adicionei o endereço à consulta."}}`
+    -   **Para Cancelamento:** Para "Cancele a consulta com Dr. Silvio", a entidade seria:
+        `{{"intent": "reschedule_or_modify_event", "entities": {{"actions": [{{"action": "cancel", "keywords": ["Consulta", "Dr Silvio"]}}]}}, "explanation": "Ok, buscando a consulta para confirmar o cancelamento."}}`
+
+-   `confirm_action`, `cancel_action`, `clarify_details`, `unknown`: Para outros casos.
 """
 
 def process_user_prompt(chat_history: list) -> dict:
-    """
-    Envia o prompt do usuário para a API do Gemini e retorna a resposta JSON.
-    """
-    if not genai:
-        return {"intent": "unknown", "entities": {}, "explanation": "Desculpe, estou com um problema de configuração interna."}
-
-    model = genai.GenerativeModel( # type: ignore
-        model_name='gemini-1.5-flash-latest',
-        system_instruction=get_system_instructions()
-    )
-    
+    if not genai: return {"intent": "unknown", "entities": {}, "explanation": "Desculpe, estou com um problema de configuração interna."}
+    model = genai.GenerativeModel(model_name='gemini-1.5-flash-latest', system_instruction=get_system_instructions()) # type: ignore
     generation_config = genai.types.GenerationConfig(response_mime_type="application/json") # type: ignore
-
     try:
         response = model.generate_content(chat_history, generation_config=generation_config)
         cleaned_json = response.text.strip().replace("```json", "").replace("```", "").strip()
@@ -77,7 +70,6 @@ def process_user_prompt(chat_history: list) -> dict:
     except (json.JSONDecodeError, Exception) as e:
         print(f"Erro ao processar resposta da LLM: {e}")
         raw_response_text = "N/A"
-        if 'response' in locals() and hasattr(response, 'text'):
-            raw_response_text = response.text
+        if 'response' in locals() and hasattr(response, 'text'): raw_response_text = response.text
         print(f"Resposta bruta recebida: {raw_response_text}")
         return {"intent": "unknown", "entities": {}, "explanation": "Peço desculpas, tive uma dificuldade em entender sua solicitação."}

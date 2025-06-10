@@ -6,3 +6,6 @@ rich
 python-dotenv
 google-generativeai
 unidecode
+python-dateutil
+# Optional dependencies for additional functionality
+# Uncomment the following lines if you want to use these features   

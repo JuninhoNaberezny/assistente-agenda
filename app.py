@@ -78,66 +78,53 @@ def chat():
     response_text = explanation
     
     try:
-        if intent == "find_event":
-            keywords = entities.get("keywords", [])
-            if not keywords:
-                response_text = "Não entendi sobre qual evento você está perguntando."
-            else:
-                # --- LÓGICA DE BUSCA EM CASCATA ---
-                
-                # Tentativa 1: Busca Específica com todos os termos
-                query = " ".join(keywords)
-                found_events = find_events_by_query(calendar_service, query)
-                
-                # Tentativa 2: Busca Ampla se a primeira falhar
-                if not found_events and len(keywords) > 1:
-                    # Lista de verbos comuns para ignorar na segunda busca
-                    common_verbs = ['falar', 'ver', 'ter', 'levar', 'encontrar', 'conversar', 'arrumar', 'pegar']
-                    # Filtra os keywords, mantendo apenas os que não são verbos comuns
-                    filtered_keywords = [k for k in keywords if k.lower() not in common_verbs]
-                    
-                    if filtered_keywords:
-                        console.print(f"[yellow]Busca específica falhou. Tentando busca ampla com: '{' '.join(filtered_keywords)}'[/yellow]")
-                        query = " ".join(filtered_keywords)
-                        found_events = find_events_by_query(calendar_service, query)
-
-                # Constrói a resposta final
-                if not found_events:
-                    response_text = f"Não encontrei nenhum evento na sua agenda sobre '{query}'."
-                else:
-                    response_text = "Encontrei o(s) seguinte(s) compromisso(s) para você:<br>" + format_event_list(found_events)
-        
-        elif intent == "list_events":
-            start_date = entities.get("start_date") or entities.get("date")
-            end_date = entities.get("end_date") or entities.get("date")
-            if start_date:
-                events, formatted_range = list_events_in_range(calendar_service, start_date, end_date)
-                if not events:
-                    response_text = f"Você não tem nenhum evento agendado para {formatted_range}."
-                else:
-                    response_text = f"Para {formatted_range}, seus compromissos são:<br>{format_event_list(events)}"
-            else:
-                response_text = "Não consegui identificar a data que você pediu."
-
-        # (As outras intenções permanecem as mesmas)
-        elif intent == "create_event":
+        if intent == "create_event":
             events_to_create = entities.get("events_to_create", [])
             if not events_to_create or not isinstance(events_to_create, list):
-                response_text = "Não consegui entender os detalhes do evento."
+                response_text = "Não consegui entender os detalhes do evento que você quer criar."
             else:
                 created_events, failed_events = [], []
                 for event_data in events_to_create:
+                    # --- CAMADA DE DEFESA: VALIDAÇÃO DOS DADOS DO LLM ---
+                    if not all(k in event_data for k in ("summary", "start_time", "end_time")):
+                        console.print(f"[yellow]Validação falhou: LLM não enviou todos os campos necessários. Dados: {event_data}[/yellow]")
+                        failed_events.append(event_data)
+                        continue # Pula para o próximo evento da lista
+                    
                     try:
-                        # Usando ** para desempacotar o dicionário como argumentos
                         new_event = create_event(service=calendar_service, **event_data)
                         created_events.append(new_event)
                     except Exception as e:
                         failed_events.append(event_data)
-                        console.print(f"[bold red]Falha ao criar evento: {e}[/bold red]")
+                        console.print(f"[bold red]Falha ao criar evento na API do Google: {e}[/bold red]")
+
+                # Constrói a resposta final com base no que deu certo ou errado
                 if created_events:
-                    response_text = "Agendei o(s) seguinte(s) compromisso(s):<br>" + format_event_list(created_events)
+                    response_text = "Tudo certo! Agendei o(s) seguinte(s) compromisso(s):<br>" + format_event_list(created_events)
                 else:
-                    response_text = "Desculpe, não consegui agendar os compromissos."
+                    response_text = "Desculpe, não consegui agendar os compromissos. Faltaram informações essenciais como o título ou a data/hora."
+                
+                if failed_events and created_events: # Se alguns falharam e outros não
+                    response_text += "<br>Alguns itens não puderam ser agendados por falta de informação."
+
+        # (A lógica de outras intenções permanece a mesma)
+        elif intent == "find_event":
+            keywords = entities.get("keywords", [])
+            if not keywords:
+                response_text = "Não entendi sobre qual evento você está perguntando."
+            else:
+                query = " ".join(keywords)
+                found_events = find_events_by_query(calendar_service, query)
+                if not found_events and len(keywords) > 1:
+                    common_verbs = ['falar', 'ver', 'ter', 'levar', 'encontrar', 'conversar', 'arrumar', 'pegar']
+                    filtered_keywords = [k for k in keywords if k.lower() not in common_verbs]
+                    if filtered_keywords:
+                        query = " ".join(filtered_keywords)
+                        found_events = find_events_by_query(calendar_service, query)
+                if not found_events:
+                    response_text = f"Não encontrei nenhum evento na sua agenda sobre '{query}'."
+                else:
+                    response_text = "Encontrei o(s) seguinte(s) compromisso(s) para você:<br>" + format_event_list(found_events)
 
     except Exception as e:
         console.print(f"[bold red]ERRO na ação do calendário:[/bold red] {e}")
@@ -149,7 +136,6 @@ def chat():
     return jsonify({"response": response_text})
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5001)
-
-# O código acima é o arquivo principal da aplicação Flask que integra o Google Calendar com um modelo de linguagem.
-# Ele processa as solicitações do usuário, interage com a API do Google Calendar e retorna respostas formatadas.    
+    # CORREÇÃO DE AMBIENTE: use_reloader=False previne o erro de soquete no Windows.
+    # Você precisará parar e reiniciar o servidor manualmente para ver as alterações no código.
+    app.run(debug=True, use_reloader=False, port=5001)

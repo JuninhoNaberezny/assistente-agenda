@@ -11,14 +11,30 @@
         .chat-messages { flex-grow: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 15px; }
         .message { padding: 10px 15px; border-radius: 18px; max-width: 75%; line-height: 1.4; }
         .user-message { background-color: #4A90E2; color: white; align-self: flex-end; border-bottom-right-radius: 4px; }
+        .assistant-message-wrapper { display: flex; flex-direction: column; align-items: flex-start; }
         .assistant-message { background-color: #e9e9eb; color: #333; align-self: flex-start; border-bottom-left-radius: 4px; }
         .chat-input-form { display: flex; padding: 15px; border-top: 1px solid #ddd; }
         #message-input { flex-grow: 1; border: 1px solid #ccc; border-radius: 20px; padding: 10px 15px; font-size: 1em; outline: none; }
         #send-button { background-color: #4A90E2; color: white; border: none; border-radius: 50%; width: 44px; height: 44px; margin-left: 10px; cursor: pointer; font-size: 1.5em; display: flex; align-items: center; justify-content: center; }
         .typing-indicator { align-self: flex-start; color: #999; font-style: italic; }
+        
+        /* --- ESTILOS DO FEEDBACK (NOVOS) --- */
+        .feedback-buttons { margin-top: 8px; align-self: flex-start; display: flex; gap: 5px; }
+        .feedback-btn { cursor: pointer; background: #f0f2f5; border: 1px solid #ddd; border-radius: 10px; padding: 2px 8px; font-size: 12px; }
+        .feedback-btn:hover { background: #e0e2e5; }
+        .feedback-thanks { margin-top: 8px; font-size: 12px; color: #4A90E2; font-weight: bold; }
+
+        /* --- ESTILOS DO MODAL (NOVOS) --- */
+        .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.5); }
+        .modal-content { background-color: #fefefe; margin: 15% auto; padding: 20px; border: 1px solid #888; width: 80%; max-width: 500px; border-radius: 8px; text-align: center; }
+        .modal-content h2 { margin-top: 0; }
+        .modal-content textarea { width: calc(100% - 20px); min-height: 80px; margin-top: 10px; padding: 10px; border-radius: 4px; border: 1px solid #ccc; }
+        .modal-content button { background-color: #4A90E2; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; margin-top: 15px; }
+        .modal-content .close-btn { float: right; font-size: 28px; font-weight: bold; cursor: pointer; }
     </style>
 </head>
 <body>
+
 <div class="chat-container">
     <div class="chat-header">Assistente Pessoal de Agenda</div>
     <div class="chat-messages" id="chat-messages">
@@ -29,8 +45,54 @@
         <button id="send-button" type="submit">➤</button>
     </form>
 </div>
+
+<div id="feedback-modal" class="modal">
+    <div class="modal-content">
+        <span class="close-btn" id="close-modal">&times;</span>
+        <h2>O que você esperava que eu fizesse?</h2>
+        <p>Por favor, me diga qual seria a resposta ou ação correta. Seu feedback me ajuda a aprender.</p>
+        <form id="feedback-form">
+            <textarea id="correction-input" placeholder="Ex: 'Cancele o dentista e marque um oftalmologista para o mesmo horário.'" required></textarea>
+            <button type="submit">Enviar Feedback</button>
+        </form>
+    </div>
+</div>
+
 <script>
-    const chatForm = document.getElementById('chat-form'), messageInput = document.getElementById('message-input'), chatMessages = document.getElementById('chat-messages');
+    const chatForm = document.getElementById('chat-form');
+    const messageInput = document.getElementById('message-input');
+    const chatMessages = document.getElementById('chat-messages');
+
+    // --- LÓGICA DO MODAL (NOVA) ---
+    const modal = document.getElementById('feedback-modal');
+    const closeModalBtn = document.getElementById('close-modal');
+    const feedbackForm = document.getElementById('feedback-form');
+    const correctionInput = document.getElementById('correction-input');
+
+    closeModalBtn.onclick = () => modal.style.display = "none";
+    window.onclick = (event) => { if (event.target == modal) modal.style.display = "none"; };
+
+    feedbackForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const correction = correctionInput.value.trim();
+        if (!correction) return;
+        
+        try {
+            const response = await fetch('/feedback', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ correction: correction })
+            });
+            const data = await response.json();
+            appendMessage(data.message, 'assistant-message'); // Confirmação do feedback
+        } catch (error) {
+            appendMessage('Não foi possível enviar o feedback. Tente mais tarde.', 'assistant-message');
+        } finally {
+            modal.style.display = "none";
+            correctionInput.value = '';
+        }
+    });
+
     chatForm.addEventListener('submit', async e => {
         e.preventDefault();
         const userMessage = messageInput.value.trim();
@@ -40,14 +102,17 @@
         showTypingIndicator();
         try {
             const response = await fetch('/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: userMessage }) });
+            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
             const data = await response.json();
             removeTypingIndicator();
-            appendMessage(data.response, 'assistant-message');
+            appendAssistantMessage(data.response); // Usa a nova função para mensagens do assistente
         } catch (error) {
+            console.error("Fetch error:", error);
             removeTypingIndicator();
             appendMessage('Desculpe, não consegui me conectar. Tente novamente mais tarde.', 'assistant-message');
         }
     });
+
     function appendMessage(message, className) {
         const el = document.createElement('div');
         el.classList.add('message', className);
@@ -55,7 +120,46 @@
         chatMessages.appendChild(el);
         chatMessages.scrollTop = chatMessages.scrollHeight;
     }
+
+    // --- FUNÇÃO MODIFICADA PARA ADICIONAR BOTÕES DE FEEDBACK ---
+    function appendAssistantMessage(message) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'assistant-message-wrapper';
+
+        const messageEl = document.createElement('div');
+        messageEl.classList.add('message', 'assistant-message');
+        messageEl.innerHTML = message;
+        
+        const feedbackContainer = document.createElement('div');
+        feedbackContainer.className = 'feedback-buttons';
+        
+        const thumbUp = document.createElement('button');
+        thumbUp.className = 'feedback-btn';
+        thumbUp.innerText = '👍';
+        thumbUp.onclick = () => {
+            feedbackContainer.innerHTML = '<span class="feedback-thanks">Obrigado!</span>';
+        };
+
+        const thumbDown = document.createElement('button');
+        thumbDown.className = 'feedback-btn';
+        thumbDown.innerText = '👎';
+        thumbDown.onclick = () => {
+            modal.style.display = "block";
+            // Esconde os botões após o clique para evitar duplicação
+            feedbackContainer.innerHTML = ''; 
+        };
+
+        feedbackContainer.appendChild(thumbUp);
+        feedbackContainer.appendChild(thumbDown);
+        
+        wrapper.appendChild(messageEl);
+        wrapper.appendChild(feedbackContainer);
+        chatMessages.appendChild(wrapper);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
     function showTypingIndicator() {
+        if (document.getElementById('typing-indicator')) return;
         const el = document.createElement('div');
         el.id = 'typing-indicator';
         el.classList.add('message', 'assistant-message', 'typing-indicator');
@@ -63,6 +167,7 @@
         chatMessages.appendChild(el);
         chatMessages.scrollTop = chatMessages.scrollHeight;
     }
+
     function removeTypingIndicator() {
         document.getElementById('typing-indicator')?.remove();
     }

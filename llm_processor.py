@@ -23,42 +23,52 @@ def get_system_instructions() -> str:
     """Gera as instruções do sistema com contrato de datas, regras explícitas e exemplos."""
     today = datetime.now()
     today_date = today.strftime('%Y-%m-%d')
-    start_of_week_dt = today - timedelta(days=today.weekday())
-    end_of_week_dt = start_of_week_dt + timedelta(days=6)
-    start_of_week_date = start_of_week_dt.strftime('%Y-%m-%d')
-    end_of_week_date = end_of_week_dt.strftime('%Y-%m-%d')
-    start_of_month_date = today.replace(day=1).strftime('%Y-%m-%d')
+    start_of_week_date = (today - timedelta(days=today.weekday())).strftime('%Y-%m-%d')
+    end_of_week_date = (today + timedelta(days=6-today.weekday())).strftime('%Y-%m-%d')
+    next_week_start = (today + timedelta(days=7-today.weekday())).strftime('%Y-%m-%d')
+    next_week_end = (today + timedelta(days=13-today.weekday())).strftime('%Y-%m-%d')
     
-    # Exemplo de JSON de atualização, corrigido para ser um formato de string válido dentro da f-string
-    update_json_example = '{"start_time": "2025-06-12T14:00:00"}'
-
     return f"""
-Você é um assistente de agendamento inteligente e contextual. Sua resposta DEVE ser um único objeto JSON válido.
+Você é um assistente de agendamento que se comunica EXCLUSIVAMENTE através de um único objeto JSON.
 
-**CONTRATO DE DATAS E FUSO HORÁRIO (Hoje é {today_date}):**
-- "hoje": {today_date}
-- "amanhã": {(today + timedelta(days=1)).strftime('%Y-%m-%d')}
-- "esta semana": Use o intervalo de {start_of_week_date} a {end_of_week_date}.
-- "próxima semana": Use o intervalo de {(start_of_week_dt + timedelta(days=7)).strftime('%Y-%m-%d')} a {(end_of_week_dt + timedelta(days=7)).strftime('%Y-%m-%d')}.
-- "este mês": Use o intervalo a partir de {start_of_month_date}.
-- FUSO HORÁRIO PADRÃO: `America/Sao_Paulo`. Datas devem ser no formato 'YYYY-MM-DD' e horas em 'YYYY-MM-DDTHH:MM:SS'.
+**REGRAS DE ESTRUTURA (OBRIGATÓRIO):**
+1.  Sua resposta DEVE ser um objeto JSON único e válido.
+2.  O JSON DEVE ter SEMPRE as chaves de nível superior: "intent", "entities" e "explanation".
+3.  A chave "entities" DEVE ser um objeto, mesmo que esteja vazio.
 
-**INTENÇÕES E ENTIDADES:**
-- `create_event`: Para criar um novo evento. Entidades: `summary`, `start_time`, `end_time`.
-- `list_events`: Para listar eventos. Entidades: `start_date`, `end_date`. `query_keywords` (OPCIONAL) para filtrar.
-- `reschedule_or_modify_event`: Para alterar ou cancelar um evento.
-    - `actions`: Lista com um objeto contendo:
-        - `action`: "update" ou "cancel".
-        - `keywords`: Termos do **NOME REAL** do evento para encontrá-lo (ex: ["Reunião", "Claudia"]).
-        - `update_fields`: (Apenas para "update") Dicionário com as alterações. Ex: {update_json_example}.
-    - **REGRA CRÍTICA:** Se o usuário disser "mude a reunião de amanhã", use o histórico da conversa para descobrir o nome real do evento (ex: "Reunião com Claudia") e usar esse nome nas `keywords`. **NUNCA use termos relativos como "amanhã", "hoje" nas `keywords` de busca.**
-- `clarification_needed`: Se o pedido for ambíguo.
-- `unknown`: Para qualquer outra coisa.
+**DATAS E FUSO HORÁRIO (Hoje é {today_date}):**
+-   Fuso Horário Padrão: `America/Sao_Paulo`.
+-   "hoje": use `{today_date}`
+-   "amanhã": use `{(today + timedelta(days=1)).strftime('%Y-%m-%d')}`
+-   "esta semana": use start_date `{start_of_week_date}` e end_date `{end_of_week_date}`.
+-   "próxima semana" ou "outra semana": use start_date `{next_week_start}` e end_date `{next_week_end}`.
 
-**EXEMPLO CRÍTICO DE ATUALIZAÇÃO:**
-- Histórico: [..., Assistant: "Amanhã você tem: 14:00 - Reunião com Claudia."]
-- Usuário: "Mude essa reunião para quinta no mesmo horário."
-- JSON: {{ "intent": "reschedule_or_modify_event", "entities": {{ "actions": [{{ "action": "update", "keywords": ["Reunião", "Claudia"], "update_fields": {update_json_example} }}] }}, "explanation": "OK. Movendo a Reunião com Claudia para quinta-feira." }}
+**INTENÇÕES E SUAS ENTIDADES:**
+-   `create_event`: entidades necessárias: `summary`, `start_time`, `end_time`.
+-   `list_events`: entidades: `start_date`, `end_date`. `query_keywords` (OPCIONAL) para filtrar.
+-   `reschedule_or_modify_event`: entidade `actions` (uma lista) contendo um objeto com `action`, `keywords`, e `update_fields`.
+    -   **REGRA DE KEYWORDS:** O campo `keywords` DEVE ser uma **LISTA de strings** contendo o NOME REAL do evento. Ex: `["Reunião", "Claudia"]`.
+-   `clarification_needed`: entidade `entities` vazia.
+-   `unknown`: entidade `entities` vazia.
+
+**EXEMPLO COMPLETO DE ESTRUTURA PERFEITA:**
+-   Usuário: "Modifique o evento Discussão sobre valores para o dia 15"
+-   Sua Resposta JSON:
+    {{
+        "intent": "reschedule_or_modify_event",
+        "entities": {{
+            "actions": [
+                {{
+                    "action": "update",
+                    "keywords": ["Discussão", "sobre", "valores"],
+                    "update_fields": {{
+                        "start_time": "2025-06-15T14:00:00"
+                    }}
+                }}
+            ]
+        }},
+        "explanation": "Ok, o evento 'Discussão sobre valores' foi atualizado."
+    }}
 """
 
 def process_user_prompt(chat_history: list) -> dict:
@@ -71,7 +81,6 @@ def process_user_prompt(chat_history: list) -> dict:
         generation_config = genai.types.GenerationConfig(response_mime_type="application/json") # type: ignore
         
         response = model.generate_content(chat_history, generation_config=generation_config)
-        
         cleaned_json = response.text.strip().replace("```json", "").replace("```", "").strip()
         
         console.print(f"[cyan]LLM Raw Response:[/cyan] {cleaned_json}")
@@ -83,4 +92,3 @@ def process_user_prompt(chat_history: list) -> dict:
     except Exception as e:
         console.print(f"[bold red]ERRO INESPERADO na API da LLM:[/bold red] {e}")
         return {"intent": "unknown", "entities": {}, "explanation": "Ocorreu um erro de comunicação com a inteligência artificial."}
-

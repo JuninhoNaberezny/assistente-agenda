@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 # Configura a API Key
 GOOGLE_API_KEY = os.getenv('GEMINI_API_KEY')
 if GOOGLE_API_KEY:
-    genai.configure(api_key=GOOGLE_API_KEY)
+    genai.configure(api_key=GOOGLE_API_KEY) # type: ignore
 
 def get_system_instructions():
     """
@@ -16,7 +16,6 @@ def get_system_instructions():
     today = datetime.now()
     today_date = today.strftime("%Y-%m-%d")
     
-    # --- CORREÇÃO APLICADA AQUI ---
     # Realiza os cálculos de data antes de formatar para string
     this_week_start_dt = today - timedelta(days=today.weekday())
     this_week_end_dt = this_week_start_dt + timedelta(days=6)
@@ -170,10 +169,10 @@ def process_prompt_with_llm(user_prompt, chat_history):
         return None, "A chave da API do Gemini não foi configurada."
 
     try:
-        model = genai.GenerativeModel(
+        model = genai.GenerativeModel( # type: ignore
             model_name='gemini-1.5-flash-latest',
             system_instruction=get_system_instructions(),
-            generation_config=genai.GenerationConfig(
+            generation_config=genai.GenerationConfig( # type: ignore
                 response_mime_type="application/json"
             )
         )
@@ -181,14 +180,12 @@ def process_prompt_with_llm(user_prompt, chat_history):
         history_for_llm = []
         for entry in chat_history:
             role = 'user' if entry['role'] == 'user' else 'model'
-            # Garantimos que o conteúdo seja sempre uma string para a API
             content = entry.get('content', '')
             if isinstance(content, dict):
-                 content = json.dumps(content) # Converte dict para string JSON se necessário
+                 content = json.dumps(content) 
             
             if role == 'user':
                  history_for_llm.append({'role': 'user', 'parts': [content]})
-            # Apenas respostas do assistente que sejam string são adicionadas ao histórico do modelo
             elif role == 'model' and isinstance(content, str):
                  history_for_llm.append({'role': 'model', 'parts': [content]})
 

@@ -4,6 +4,7 @@ from flask import Flask, render_template, request, jsonify, session
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from dateutil import parser
+from pprint import pformat # Importa a função para formatar o JSON
 
 # Carregar variáveis de ambiente
 load_dotenv()
@@ -16,13 +17,15 @@ import feedback_manager
 # Importações para logging
 import logging
 from rich.logging import RichHandler
+from rich.console import Console
 
 # Configuração do logging
+console = Console()
 logging.basicConfig(
     level="INFO",
     format="%(message)s",
     datefmt="[%X]",
-    handlers=[RichHandler(rich_tracebacks=True)]
+    handlers=[RichHandler(rich_tracebacks=True, console=console, markup=True)]
 )
 log = logging.getLogger("rich")
 
@@ -42,34 +45,37 @@ except Exception as e:
     log.error(f"Falha ao iniciar o serviço do Google Calendar: {e}")
     gcal_service = None
 
-# --- ROTEADOR DE INTENÇÕES E FUNÇÕES HANDLER ---
+# --- FUNÇÕES HANDLER (AGORA RETORNAM UM DICIONÁRIO) ---
+
+def _format_response(text, link=None):
+    """Padroniza o formato de resposta das funções handler."""
+    return {'text': text, 'link': link}
 
 def handle_create_event(details):
-    """Lida com a intenção de criar um evento, verificando conflitos."""
     if not details:
-        return "Não recebi os detalhes para criar o evento."
+        return _format_response("Não recebi os detalhes para criar o evento.")
         
     start_time = details.get('start_time')
     end_time = details.get('end_time')
 
     if not all([start_time, end_time]):
-        return "Não consegui identificar a data e hora para criar o evento."
+        return _format_response("Não consegui identificar a data e hora para criar o evento.")
 
     conflicting_events, error = calendar_service.list_events_in_range(gcal_service, start_time, end_time)
     if error:
-        return f"Houve um problema ao verificar sua agenda: {error}"
+        return _format_response(f"Houve um problema ao verificar sua agenda: {error}")
     
     if conflicting_events:
         session['pending_action'] = {'intent': 'confirm_conflicting_creation', 'details': details}
         event_titles = ", ".join([f"'{event.get('summary', 'Evento sem título')}'" for event in conflicting_events])
-        return f"Percebi que você já tem outro(s) evento(s) nesse horário: {event_titles}. Deseja marcar mesmo assim?"
+        text = f"Percebi que você já tem outro(s) evento(s) nesse horário: {event_titles}.\nDeseja marcar mesmo assim?"
+        return _format_response(text)
 
     return execute_create_event(details)
 
 def execute_create_event(details):
-    """Executa a criação do evento."""
     if not details:
-        return "Detalhes para criação do evento estão faltando."
+        return _format_response("Detalhes para criação do evento estão faltando.")
 
     event, error = calendar_service.create_event(
         gcal_service,
@@ -80,80 +86,78 @@ def execute_create_event(details):
         create_conference=details.get('create_conference', False)
     )
     if error or not event:
-        return f"Não consegui criar o evento: {error}"
+        return _format_response(f"Não consegui criar o evento: {error}")
     
-    link = event.get('hangoutLink', '')
-    response_msg = f"Evento '{event.get('summary')}' criado com sucesso!"
-    if link:
-        response_msg += f" Link da videochamada: {link}"
-    return response_msg
+    conference_link = event.get('hangoutLink')
+    event_summary = event.get('summary')
+    text = f"Evento '{event_summary}' criado com sucesso!"
+    if conference_link:
+        text += f"\n\n🔗 **Link da videochamada:** {conference_link}"
+        
+    return _format_response(text, event.get('htmlLink'))
 
 def handle_list_events(details):
-    """Lida com a intenção de listar eventos."""
     events, error = calendar_service.list_events_in_range(
         gcal_service, details.get('start_time'), details.get('end_time'))
     if error:
-        return f"Não consegui listar seus eventos: {error}"
+        return _format_response(f"Não consegui listar seus eventos: {error}")
     if not events:
-        return "Você não tem nenhum evento nesse período."
+        return _format_response("Você não tem nenhum evento nesse período.")
     
     response_lines = ["Aqui estão seus próximos eventos:"]
     for event in events:
         start_str = event.get('start', {}).get('dateTime', event.get('start', {}).get('date'))
         if start_str:
             start = parser.isoparse(start_str).strftime('%d/%m às %H:%M')
-            response_lines.append(f"- {event.get('summary', 'Evento sem título')} em {start}")
-    return "\n".join(response_lines)
+            summary = event.get('summary', 'Evento sem título')
+            response_lines.append(f"• **{summary}** em {start}")
+    return _format_response("\n".join(response_lines))
 
 def handle_cancel_event(details):
-    """Lida com a intenção de cancelar um evento, pedindo confirmação."""
     keywords = details.get('keywords', [])
     if not keywords:
-        return "Por favor, especifique qual evento você deseja cancelar."
+        return _format_response("Por favor, especifique qual evento você deseja cancelar.")
     session['pending_action'] = {'intent': 'confirm_cancel', 'details': details}
-    return f"Você tem certeza que deseja cancelar o evento relacionado a '{' '.join(keywords)}'?"
+    return _format_response(f"Você tem certeza que deseja cancelar o evento relacionado a '{' '.join(keywords)}'?")
 
 def execute_cancel_event(details):
-    """Executa o cancelamento após a confirmação."""
     keywords = details.get('keywords', [])
     start_time = details.get('search_start_time')
     end_time = details.get('search_end_time')
 
     found_events, error = calendar_service.find_events_by_query(gcal_service, keywords, start_time, end_time)
     if error:
-        return f"Erro ao procurar o evento para cancelar: {error}"
+        return _format_response(f"Erro ao procurar o evento para cancelar: {error}")
     if not found_events:
-        return "Não encontrei nenhum evento com esses detalhes para cancelar."
+        return _format_response("Não encontrei nenhum evento com esses detalhes para cancelar.")
     if len(found_events) > 1:
-        return "Encontrei múltiplos eventos com essa descrição. Por favor, seja mais específico."
+        return _format_response("Encontrei múltiplos eventos com essa descrição. Por favor, seja mais específico.")
 
     event_to_delete = found_events[0]
     success, error = calendar_service.delete_event(gcal_service, event_to_delete.get('id'))
     if not success:
-        return f"Não foi possível cancelar o evento: {error}"
-    return f"Evento '{event_to_delete.get('summary')}' cancelado com sucesso."
+        return _format_response(f"Não foi possível cancelar o evento: {error}")
+    return _format_response(f"Evento '{event_to_delete.get('summary')}' cancelado com sucesso.")
 
 def handle_reschedule_event(details):
-    """Lida com a intenção de remarcar um evento, pedindo confirmação."""
     keywords = details.get('keywords', [])
     if not keywords:
-        return "Por favor, especifique qual evento você deseja alterar."
+        return _format_response("Por favor, especifique qual evento você deseja alterar.")
     session['pending_action'] = {'intent': 'confirm_reschedule', 'details': details}
-    return f"Você tem certeza que deseja alterar o evento relacionado a '{' '.join(keywords)}'?"
+    return _format_response(f"Você tem certeza que deseja alterar o evento relacionado a '{' '.join(keywords)}'?")
 
 def execute_reschedule_event(details):
-    """Executa a remarcação após a confirmação."""
     keywords = details.get('keywords', [])
     start_time = details.get('search_start_time')
     end_time = details.get('search_end_time')
 
     found_events, error = calendar_service.find_events_by_query(gcal_service, keywords, start_time, end_time)
     if error:
-        return f"Erro ao procurar o evento para alterar: {error}"
+        return _format_response(f"Erro ao procurar o evento para alterar: {error}")
     if not found_events:
-        return "Não encontrei nenhum evento com esses detalhes para alterar."
+        return _format_response("Não encontrei nenhum evento com esses detalhes para alterar.")
     if len(found_events) > 1:
-        return "Encontrei múltiplos eventos. Por favor, seja mais específico."
+        return _format_response("Encontrei múltiplos eventos. Por favor, seja mais específico.")
 
     event_to_update = found_events[0]
     
@@ -176,35 +180,34 @@ def execute_reschedule_event(details):
         update_payload['end'] = {'dateTime': details['new_end_time']}
 
     if not update_payload:
-        return "Não identifiquei nenhuma alteração a ser feita."
+        return _format_response("Não identifiquei nenhuma alteração a ser feita.")
 
     updated_event, error = calendar_service.update_event(gcal_service, event_to_update.get('id'), update_payload)
     if error or not updated_event:
-        return f"Não foi possível alterar o evento: {error}"
-    return f"Evento '{updated_event.get('summary')}' alterado com sucesso."
+        return _format_response(f"Não foi possível alterar o evento: {error}")
+    return _format_response(f"Evento '{updated_event.get('summary')}' alterado com sucesso.", updated_event.get('htmlLink'))
 
 def handle_ask_availability(details):
-    """Lida com a intenção de verificar disponibilidade."""
     start_time_str = details.get('start_time')
     end_time_str = details.get('end_time')
 
     events, error = calendar_service.list_events_in_range(gcal_service, start_time_str, end_time_str)
     if error:
-        return f"Não consegui verificar sua disponibilidade: {error}"
+        return _format_response(f"Não consegui verificar sua disponibilidade: {error}")
 
     if not events:
-        return "Parece que você está livre nesse período!"
+        return _format_response("Parece que você está livre nesse período!")
     
     response = "Nesse período, sua agenda tem os seguintes compromissos:\n"
     for event in events:
         start = parser.isoparse(event.get('start', {}).get('dateTime')).strftime('%H:%M')
         end = parser.isoparse(event.get('end', {}).get('dateTime')).strftime('%H:%M')
-        response += f"- '{event.get('summary')}' das {start} às {end}\n"
-    response += "Fora desses horários, você está livre."
-    return response
+        response += f"• **{event.get('summary')}** das {start} às {end}\n"
+    response += "\nFora desses horários, você está livre."
+    return _format_response(response)
 
 def handle_unknown_intent(_):
-    return "Desculpe, não entendi o que você quis dizer. Posso te ajudar a criar, listar, alterar ou cancelar eventos."
+    return _format_response("Desculpe, não entendi o que você quis dizer. Posso te ajudar a criar, listar, alterar ou cancelar eventos.")
 
 INTENT_HANDLERS = {
     'create_event': handle_create_event,
@@ -231,14 +234,21 @@ def chat():
         return jsonify({'response': "Pedido inválido."}), 400
     user_input = request_data['message']
     
+    # --- LOG ADICIONADO ---
+    console.rule("[bold green]Nova Requisição[/bold green]")
+    log.info(f"[bold]Entrada do Usuário:[/] {user_input}")
+    
     if 'chat_history' not in session:
         session['chat_history'] = []
     session['chat_history'].append({'role': 'user', 'content': user_input})
     session.modified = True
 
+    response_data = {}
     pending_action = session.get('pending_action')
     if pending_action:
+        log.info(f"[bold]Ação Pendente Detectada:[/] {pending_action.get('intent')}")
         if user_input.lower() in ['sim', 's', 'pode', 'confirmo', 'isso', 'ok']:
+            log.info("[bold yellow]Usuário confirmou a ação.[/]")
             intent = pending_action.get('intent')
             details = pending_action.get('details')
             action_executors = {
@@ -247,36 +257,53 @@ def chat():
                 'confirm_conflicting_creation': execute_create_event,
             }
             handler = action_executors.get(intent)
-            response_text = handler(details) if handler else "Houve um erro no fluxo de confirmação."
+            response_data = handler(details) if handler else _format_response("Houve um erro no fluxo de confirmação.")
         else:
-            response_text = "Ok, ação cancelada."
+            log.info("[bold red]Usuário negou a ação.[/]")
+            response_data = _format_response("Ok, ação cancelada.")
         session.pop('pending_action', None)
     else:
         llm_response, error = llm_processor.process_prompt_with_llm(user_input, session['chat_history'])
         if error:
-            log.error(f"Erro da LLM: {error}", extra={"markup": True})
+            log.error(f"Erro da LLM: {error}")
             return jsonify({'response': error})
+
+        # --- LOG ADICIONADO ---
+        log.info(f"[bold]JSON da LLM:[/]\n[cyan]{pformat(llm_response)}[/]")
 
         session['last_llm_response'] = llm_response
         intent = llm_response.get('intent', 'unknown')
         details = llm_response.get('details', {})
+
+        # --- LOG ADICIONADO ---
+        log.info(f"[bold]Intenção Processada:[/] '{intent}'")
+
         handler = INTENT_HANDLERS.get(intent, handle_unknown_intent)
-        response_text = handler(details)
+        response_data = handler(details)
     
+    response_text = response_data.get('text', 'Ocorreu um erro inesperado.')
+    event_link = response_data.get('link')
+
+    # --- LOG ADICIONADO ---
+    log.info(f"[bold]Resposta para o Frontend:[/] {response_text.replace('[bold]', '').replace('[/]', '').replace('•', '-')}")
+    if event_link:
+        log.info(f"[bold]Link do Evento:[/] {event_link}")
+
     session['chat_history'].append({'role': 'assistant', 'content': response_text})
     session.modified = True
     
-    return jsonify({'response': response_text, 'llm_response': session.get('last_llm_response', {})})
+    return jsonify({
+        'response': response_text, 
+        'event_link': event_link,
+        'llm_response': session.get('last_llm_response', {})
+    })
 
 @app.route('/feedback', methods=['POST'])
 def feedback():
-    """Salva o feedback do usuário em um arquivo."""
     data = request.json
     if not data:
         return jsonify({'status': 'error', 'message': 'Corpo da requisição está vazio.'}), 400
     
-    # --- CORREÇÃO APLICADA AQUI ---
-    # Passa o dicionário 'data' inteiro para a função, como esperado.
     try:
         feedback_manager.save_feedback(data)
         return jsonify({'status': 'success'})
@@ -285,6 +312,4 @@ def feedback():
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 if __name__ == "__main__":
-    # O comando 'flask run' usa essa configuração por padrão
-    # Para rodar com 'python app.py', o debug=True é útil.
-    app.run(host='0.0.0.0', port=5001, debug=True)
+    app.run(host='0.0.0.0', port=5001, debug=False)
